@@ -5,7 +5,10 @@
 
 // +build ignore
 
-// gen-interfaces generates interfaces for each GitHub service to ease mocking.
+// gen-mock generates interfaces for each GitHub service to ease mocking.
+// It builds the interfaces in its own "mock" package to make it clear
+// that these auto-generated interfaces are not meant to be used in
+// production code.
 //
 // Embedding an interface into a struct makes it super-easy to only implement
 // the methods that you need when mocking a service, so this auto-generates
@@ -30,12 +33,13 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+	"unicode"
 )
 
 const (
 	ignoreFilePrefix1 = "gen-"
 	ignoreFilePrefix2 = "github-"
-	outputFileSuffix  = "-interfaces.go"
+	outputFile        = "../mock/mock.go"
 )
 
 var (
@@ -48,7 +52,13 @@ var (
 			fn.Recv = nil
 			fn.Body = nil
 			var buf bytes.Buffer
+			fixPackageNames(fn)
 			printer.Fprint(&buf, fset, fn)
+			//			result := buf.String()
+			//			for from, to := range substitutions {
+			//				result = strings.ReplaceAll(result, from, to)
+			//			}
+			//			return result
 			return strings.ReplaceAll(buf.String(), "\nfunc ", "\n")
 		},
 	}
@@ -68,9 +78,9 @@ func main() {
 
 	for pkgName, pkg := range pkgs {
 		t := &templateData{
-			filename: pkgName + outputFileSuffix,
+			filename: outputFile,
 			Year:     2021, // No need to change this once set (even in following years).
-			Package:  pkgName,
+			Package:  "mock",
 			Imports: map[string]string{
 				"context":  "context",
 				"io":       "io",
@@ -276,6 +286,41 @@ func (t *templateData) dump() error {
 	return ioutil.WriteFile(t.filename, clean, 0644)
 }
 
+func fixPackageNames(fn *ast.FuncDecl) {
+	if fn.Type == nil {
+		return
+	}
+
+	fixFields := func(fields []*ast.Field) {
+		for _, field := range fields {
+			switch f := field.Type.(type) {
+			case *ast.ArrayType:
+				if elt, ok := f.Elt.(*ast.StarExpr); ok {
+					if x, ok := elt.X.(*ast.Ident); ok && unicode.IsUpper(rune(x.Name[0])) {
+						x.Name = "github." + x.Name
+					}
+				}
+			case *ast.Ident:
+				if unicode.IsUpper(rune(f.Name[0])) {
+					f.Name = "github." + f.Name
+				}
+			case *ast.StarExpr:
+				if x, ok := f.X.(*ast.Ident); ok && unicode.IsUpper(rune(x.Name[0])) {
+					x.Name = "github." + x.Name
+				}
+			}
+		}
+	}
+
+	if fn.Type.Params != nil {
+		fixFields(fn.Type.Params.List)
+	}
+
+	if fn.Type.Results != nil {
+		fixFields(fn.Type.Results.List)
+	}
+}
+
 func logf(fmt string, args ...interface{}) {
 	if *verbose {
 		log.Printf(fmt, args...)
@@ -293,7 +338,8 @@ const source = `// Copyright {{.Year}} The go-github AUTHORS. All rights reserve
 package {{ $package := .Package }}{{ $package }}
 {{ with .Imports }}
 import (
-  {{- range . -}}
+	"github.com/google/go-github/v34/github"
+  {{ range . -}}
   "{{.}}"
   {{ end -}}
 )
@@ -314,6 +360,6 @@ type {{ $svc.Name }}Interface interface {
 }
 
 // {{ $svc.Name }} implements the {{ $svc.Name }}Interface.
-var _ {{ $svc.Name }}Interface = &{{ $svc.Name }}{}
+var _ {{ $svc.Name }}Interface = &github.{{ $svc.Name }}{}
 {{ end }}
 `
