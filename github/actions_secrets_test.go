@@ -7,12 +7,89 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
 	"time"
 )
+
+func TestPublicKey_UnmarshalJSON(t *testing.T) {
+	var testCases = map[string]struct {
+		data          []byte
+		wantPublicKey PublicKey
+		wantErr       bool
+	}{
+		"Empty": {
+			data:          []byte("{}"),
+			wantPublicKey: PublicKey{},
+			wantErr:       false,
+		},
+		"Invalid JSON": {
+			data:          []byte("{"),
+			wantPublicKey: PublicKey{},
+			wantErr:       true,
+		},
+		"Numeric KeyID": {
+			data:          []byte(`{"key_id":1234,"key":"2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234"}`),
+			wantPublicKey: PublicKey{KeyID: String("1234"), Key: String("2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234")},
+			wantErr:       false,
+		},
+		"String KeyID": {
+			data:          []byte(`{"key_id":"1234","key":"2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234"}`),
+			wantPublicKey: PublicKey{KeyID: String("1234"), Key: String("2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234")},
+			wantErr:       false,
+		},
+		"Invalid KeyID": {
+			data:          []byte(`{"key_id":["1234"],"key":"2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234"}`),
+			wantPublicKey: PublicKey{KeyID: nil, Key: String("2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234")},
+			wantErr:       true,
+		},
+		"Invalid Key": {
+			data:          []byte(`{"key":123}`),
+			wantPublicKey: PublicKey{KeyID: nil, Key: nil},
+			wantErr:       true,
+		},
+		"Nil": {
+			data:          nil,
+			wantPublicKey: PublicKey{KeyID: nil, Key: nil},
+			wantErr:       true,
+		},
+		"Empty String": {
+			data:          []byte(""),
+			wantPublicKey: PublicKey{KeyID: nil, Key: nil},
+			wantErr:       true,
+		},
+		"Missing Key": {
+			data:          []byte(`{"key_id":"1234"}`),
+			wantPublicKey: PublicKey{KeyID: String("1234")},
+			wantErr:       false,
+		},
+		"Missing KeyID": {
+			data:          []byte(`{"key":"2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234"}`),
+			wantPublicKey: PublicKey{Key: String("2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234")},
+			wantErr:       false,
+		},
+	}
+
+	for name, tt := range testCases {
+		tt := tt
+		t.Run(name, func(t *testing.T) {
+			pk := PublicKey{}
+			err := json.Unmarshal(tt.data, &pk)
+			if err == nil && tt.wantErr {
+				t.Errorf("PublicKey.UnmarshalJSON returned nil instead of an error")
+			}
+			if err != nil && !tt.wantErr {
+				t.Errorf("PublicKey.UnmarshalJSON returned an unexpected error: %+v", err)
+			}
+			if !reflect.DeepEqual(tt.wantPublicKey, pk) {
+				t.Errorf("PublicKey.UnmarshalJSON expected public key %+v, got %+v", tt.wantPublicKey, pk)
+			}
+		})
+	}
+}
 
 func TestActionsService_GetRepoPublicKey(t *testing.T) {
 	client, mux, _, teardown := setup()
@@ -21,6 +98,41 @@ func TestActionsService_GetRepoPublicKey(t *testing.T) {
 	mux.HandleFunc("/repos/o/r/actions/secrets/public-key", func(w http.ResponseWriter, r *http.Request) {
 		testMethod(t, r, "GET")
 		fmt.Fprint(w, `{"key_id":"1234","key":"2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234"}`)
+	})
+
+	ctx := context.Background()
+	key, _, err := client.Actions.GetRepoPublicKey(ctx, "o", "r")
+	if err != nil {
+		t.Errorf("Actions.GetRepoPublicKey returned error: %v", err)
+	}
+
+	want := &PublicKey{KeyID: String("1234"), Key: String("2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234")}
+	if !reflect.DeepEqual(key, want) {
+		t.Errorf("Actions.GetRepoPublicKey returned %+v, want %+v", key, want)
+	}
+
+	const methodName = "GetRepoPublicKey"
+	testBadOptions(t, methodName, func() (err error) {
+		_, _, err = client.Actions.GetRepoPublicKey(ctx, "\n", "\n")
+		return err
+	})
+
+	testNewRequestAndDoFailure(t, methodName, client, func() (*Response, error) {
+		got, resp, err := client.Actions.GetRepoPublicKey(ctx, "o", "r")
+		if got != nil {
+			t.Errorf("testNewRequestAndDoFailure %v = %#v, want nil", methodName, got)
+		}
+		return resp, err
+	})
+}
+
+func TestActionsService_GetRepoPublicKeyNumeric(t *testing.T) {
+	client, mux, _, teardown := setup()
+	defer teardown()
+
+	mux.HandleFunc("/repos/o/r/actions/secrets/public-key", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, "GET")
+		fmt.Fprint(w, `{"key_id":1234,"key":"2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234"}`)
 	})
 
 	ctx := context.Background()
@@ -485,5 +597,214 @@ func TestActionsService_DeleteOrgSecret(t *testing.T) {
 
 	testNewRequestAndDoFailure(t, methodName, client, func() (*Response, error) {
 		return client.Actions.DeleteOrgSecret(ctx, "o", "NAME")
+	})
+}
+
+func TestActionsService_GetEnvPublicKey(t *testing.T) {
+	client, mux, _, teardown := setup()
+	defer teardown()
+	mux.HandleFunc("/repositories/1/environments/e/secrets/public-key", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, "GET")
+		fmt.Fprint(w, `{"key_id":"1234","key":"2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234"}`)
+	})
+
+	ctx := context.Background()
+	key, _, err := client.Actions.GetEnvPublicKey(ctx, 1, "e")
+	if err != nil {
+		t.Errorf("Actions.GetEnvPublicKey returned error: %v", err)
+	}
+
+	want := &PublicKey{KeyID: String("1234"), Key: String("2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234")}
+	if !reflect.DeepEqual(key, want) {
+		t.Errorf("Actions.GetEnvPublicKey returned %+v, want %+v", key, want)
+	}
+
+	const methodName = "GetEnvPublicKey"
+	testBadOptions(t, methodName, func() (err error) {
+		_, _, err = client.Actions.GetEnvPublicKey(ctx, 0.0, "\n")
+		return err
+	})
+
+	testNewRequestAndDoFailure(t, methodName, client, func() (*Response, error) {
+		got, resp, err := client.Actions.GetEnvPublicKey(ctx, 1, "e")
+		if got != nil {
+			t.Errorf("testNewRequestAndDoFailure %v = %#v, want nil", methodName, got)
+		}
+		return resp, err
+	})
+}
+
+func TestActionsService_GetEnvPublicKeyNumeric(t *testing.T) {
+	client, mux, _, teardown := setup()
+	defer teardown()
+
+	mux.HandleFunc("/repositories/1/environments/e/secrets/public-key", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, "GET")
+		fmt.Fprint(w, `{"key_id":1234,"key":"2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234"}`)
+	})
+
+	ctx := context.Background()
+	key, _, err := client.Actions.GetEnvPublicKey(ctx, 1, "e")
+	if err != nil {
+		t.Errorf("Actions.GetEnvPublicKey returned error: %v", err)
+	}
+
+	want := &PublicKey{KeyID: String("1234"), Key: String("2Sg8iYjAxxmI2LvUXpJjkYrMxURPc8r+dB7TJyvv1234")}
+	if !reflect.DeepEqual(key, want) {
+		t.Errorf("Actions.GetEnvPublicKey returned %+v, want %+v", key, want)
+	}
+
+	const methodName = "GetEnvPublicKey"
+	testBadOptions(t, methodName, func() (err error) {
+		_, _, err = client.Actions.GetEnvPublicKey(ctx, 0.0, "\n")
+		return err
+	})
+
+	testNewRequestAndDoFailure(t, methodName, client, func() (*Response, error) {
+		got, resp, err := client.Actions.GetEnvPublicKey(ctx, 1, "e")
+		if got != nil {
+			t.Errorf("testNewRequestAndDoFailure %v = %#v, want nil", methodName, got)
+		}
+		return resp, err
+	})
+}
+
+func TestActionsService_ListEnvSecrets(t *testing.T) {
+	client, mux, _, teardown := setup()
+	defer teardown()
+
+	mux.HandleFunc("/repositories/1/environments/e/secrets", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, "GET")
+		testFormValues(t, r, values{"per_page": "2", "page": "2"})
+		fmt.Fprint(w, `{"total_count":4,"secrets":[{"name":"A","created_at":"2019-01-02T15:04:05Z","updated_at":"2020-01-02T15:04:05Z"},{"name":"B","created_at":"2019-01-02T15:04:05Z","updated_at":"2020-01-02T15:04:05Z"}]}`)
+	})
+
+	opts := &ListOptions{Page: 2, PerPage: 2}
+	ctx := context.Background()
+	secrets, _, err := client.Actions.ListEnvSecrets(ctx, 1, "e", opts)
+	if err != nil {
+		t.Errorf("Actions.ListEnvSecrets returned error: %v", err)
+	}
+
+	want := &Secrets{
+		TotalCount: 4,
+		Secrets: []*Secret{
+			{Name: "A", CreatedAt: Timestamp{time.Date(2019, time.January, 02, 15, 04, 05, 0, time.UTC)}, UpdatedAt: Timestamp{time.Date(2020, time.January, 02, 15, 04, 05, 0, time.UTC)}},
+			{Name: "B", CreatedAt: Timestamp{time.Date(2019, time.January, 02, 15, 04, 05, 0, time.UTC)}, UpdatedAt: Timestamp{time.Date(2020, time.January, 02, 15, 04, 05, 0, time.UTC)}},
+		},
+	}
+	if !reflect.DeepEqual(secrets, want) {
+		t.Errorf("Actions.ListEnvSecrets returned %+v, want %+v", secrets, want)
+	}
+
+	const methodName = "ListEnvSecrets"
+	testBadOptions(t, methodName, func() (err error) {
+		_, _, err = client.Actions.ListEnvSecrets(ctx, 0.0, "\n", opts)
+		return err
+	})
+
+	testNewRequestAndDoFailure(t, methodName, client, func() (*Response, error) {
+		got, resp, err := client.Actions.ListEnvSecrets(ctx, 1, "e", opts)
+		if got != nil {
+			t.Errorf("testNewRequestAndDoFailure %v = %#v, want nil", methodName, got)
+		}
+		return resp, err
+	})
+}
+
+func TestActionsService_GetEnvSecret(t *testing.T) {
+	client, mux, _, teardown := setup()
+	defer teardown()
+
+	mux.HandleFunc("/repositories/1/environments/e/secrets/secret", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, "GET")
+		fmt.Fprint(w, `{"name":"secret","created_at":"2019-01-02T15:04:05Z","updated_at":"2020-01-02T15:04:05Z"}`)
+	})
+
+	ctx := context.Background()
+	secret, _, err := client.Actions.GetEnvSecret(ctx, 1, "e", "secret")
+	if err != nil {
+		t.Errorf("Actions.GetEnvSecret returned error: %v", err)
+	}
+
+	want := &Secret{
+		Name:      "secret",
+		CreatedAt: Timestamp{time.Date(2019, time.January, 02, 15, 04, 05, 0, time.UTC)},
+		UpdatedAt: Timestamp{time.Date(2020, time.January, 02, 15, 04, 05, 0, time.UTC)},
+	}
+	if !reflect.DeepEqual(secret, want) {
+		t.Errorf("Actions.GetEnvSecret returned %+v, want %+v", secret, want)
+	}
+
+	const methodName = "GetEnvSecret"
+	testBadOptions(t, methodName, func() (err error) {
+		_, _, err = client.Actions.GetEnvSecret(ctx, 0.0, "\n", "\n")
+		return err
+	})
+
+	testNewRequestAndDoFailure(t, methodName, client, func() (*Response, error) {
+		got, resp, err := client.Actions.GetEnvSecret(ctx, 1, "e", "secret")
+		if got != nil {
+			t.Errorf("testNewRequestAndDoFailure %v = %#v, want nil", methodName, got)
+		}
+		return resp, err
+	})
+}
+
+func TestActionsService_CreateOrUpdateEnvSecret(t *testing.T) {
+	client, mux, _, teardown := setup()
+	defer teardown()
+
+	mux.HandleFunc("/repositories/1/environments/e/secrets/secret", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, "PUT")
+		testHeader(t, r, "Content-Type", "application/json")
+		testBody(t, r, `{"key_id":"1234","encrypted_value":"QIv="}`+"\n")
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	input := &EncryptedSecret{
+		Name:           "secret",
+		EncryptedValue: "QIv=",
+		KeyID:          "1234",
+	}
+	ctx := context.Background()
+	_, err := client.Actions.CreateOrUpdateEnvSecret(ctx, 1, "e", input)
+	if err != nil {
+		t.Errorf("Actions.CreateOrUpdateEnvSecret returned error: %v", err)
+	}
+
+	const methodName = "CreateOrUpdateEnvSecret"
+	testBadOptions(t, methodName, func() (err error) {
+		_, err = client.Actions.CreateOrUpdateEnvSecret(ctx, 0.0, "\n", input)
+		return err
+	})
+
+	testNewRequestAndDoFailure(t, methodName, client, func() (*Response, error) {
+		return client.Actions.CreateOrUpdateEnvSecret(ctx, 1, "e", input)
+	})
+}
+
+func TestActionsService_DeleteEnvSecret(t *testing.T) {
+	client, mux, _, teardown := setup()
+	defer teardown()
+
+	mux.HandleFunc("/repositories/1/environments/e/secrets/secret", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, "DELETE")
+	})
+
+	ctx := context.Background()
+	_, err := client.Actions.DeleteEnvSecret(ctx, 1, "e", "secret")
+	if err != nil {
+		t.Errorf("Actions.DeleteEnvSecret returned error: %v", err)
+	}
+
+	const methodName = "DeleteEnvSecret"
+	testBadOptions(t, methodName, func() (err error) {
+		_, err = client.Actions.DeleteEnvSecret(ctx, 0.0, "\n", "\n")
+		return err
+	})
+
+	testNewRequestAndDoFailure(t, methodName, client, func() (*Response, error) {
+		return client.Actions.DeleteEnvSecret(ctx, 1, "r", "secret")
 	})
 }
