@@ -12,11 +12,11 @@ import (
 	"testing"
 
 	"github.com/google/go-github/v35/github"
-	"github.com/google/go-github/v35/mock"
+	"github.com/google/go-github/v35/githubtest"
 )
 
 type fakeOrgSvc struct {
-	mock.OrganizationsServiceInterface
+	githubtest.OrganizationsServiceInterface
 
 	orgs []*github.Organization
 }
@@ -34,8 +34,16 @@ func TestFetchOrganizations(t *testing.T) {
 		{Name: github.String("octocat")},
 	}
 
+	ghc := githubtest.New(
+		githubtest.WithOrganizations(&github.OrganizationsService{}),
+		//		githubtest.WithOrgMembers(&github.Member{}),
+		//		githubtest.ForceListReposError(map[string]error{
+		//			"failing-org": error.New("Injected error"),
+		//		}),
+	)
+
 	c := &myClient{
-		client: github.NewClient(nil),
+		client: ghc,
 	}
 	c.client.Organizations = &fakeOrgSvc{orgs: want}
 
